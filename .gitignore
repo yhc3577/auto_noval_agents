@@ -44,7 +44,7 @@ htmlcov/
 *.tar
 
 # Claude 本地配置
-.claude/
+.claude/*
 
 # Specify 框架文件（不上传）
 .specify/
