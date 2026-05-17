@@ -1,50 +1,64 @@
-# [PROJECT_NAME] Constitution
-<!-- Example: Spec Constitution, TaskFlow Constitution, etc. -->
+<!--
+  同步影响报告
+  - 版本变更: 0.0.0 → 1.0.0
+  - 新增原则:
+    - I. 技术栈规范
+    - II. 全异步后端
+    - III. 代码注释规范
+  - 新增章节:
+    - 技术约束
+    - 开发工作流
+  - 模板状态:
+    - .specify/templates/plan-template.md ✅ 无需更新
+    - .specify/templates/spec-template.md ✅ 无需更新
+    - .specify/templates/tasks-template.md ✅ 无需更新
+  - 跟进事项: 无
+-->
 
-## Core Principles
+# 小说项目 Constitution
 
-### [PRINCIPLE_1_NAME]
-<!-- Example: I. Library-First -->
-[PRINCIPLE_1_DESCRIPTION]
-<!-- Example: Every feature starts as a standalone library; Libraries must be self-contained, independently testable, documented; Clear purpose required - no organizational-only libraries -->
+## 核心原则
 
-### [PRINCIPLE_2_NAME]
-<!-- Example: II. CLI Interface -->
-[PRINCIPLE_2_DESCRIPTION]
-<!-- Example: Every library exposes functionality via CLI; Text in/out protocol: stdin/args → stdout, errors → stderr; Support JSON + human-readable formats -->
+### I. 技术栈规范
 
-### [PRINCIPLE_3_NAME]
-<!-- Example: III. Test-First (NON-NEGOTIABLE) -->
-[PRINCIPLE_3_DESCRIPTION]
-<!-- Example: TDD mandatory: Tests written → User approved → Tests fail → Then implement; Red-Green-Refactor cycle strictly enforced -->
+整个项目后端必须使用 Python 实现，前端必须使用 Vue + TypeScript 实现。所有交互流程和文档必须使用中文。后端框架选型应优先考虑异步友好的框架（如 FastAPI）。前端应使用 Vue 3 组合式 API 和 TypeScript 严格模式。
 
-### [PRINCIPLE_4_NAME]
-<!-- Example: IV. Integration Testing -->
-[PRINCIPLE_4_DESCRIPTION]
-<!-- Example: Focus areas requiring integration tests: New library contract tests, Contract changes, Inter-service communication, Shared schemas -->
+### II. 全异步后端
 
-### [PRINCIPLE_5_NAME]
-<!-- Example: V. Observability, VI. Versioning & Breaking Changes, VII. Simplicity -->
-[PRINCIPLE_5_DESCRIPTION]
-<!-- Example: Text I/O ensures debuggability; Structured logging required; Or: MAJOR.MINOR.BUILD format; Or: Start simple, YAGNI principles -->
+后端所有 I/O 操作必须使用异步实现，严禁出现同步阻塞函数。具体要求：
+- 所有数据库操作必须使用异步驱动
+- 所有 HTTP 请求必须使用异步客户端
+- 所有文件操作必须使用异步 I/O
+- 使用 `async/await` 语法，禁止在异步函数中调用同步阻塞代码
+- 代码审查时必须检查是否存在同步阻塞调用
 
-## [SECTION_2_NAME]
-<!-- Example: Additional Constraints, Security Requirements, Performance Standards, etc. -->
+### III. 代码注释规范
 
-[SECTION_2_CONTENT]
-<!-- Example: Technology stack requirements, compliance standards, deployment policies, etc. -->
+在必要的地方必须添加注释，具体要求：
+- 所有公共 API 和函数必须有简洁的文档字符串
+- 复杂的业务逻辑必须添加解释性注释
+- 不明显的算法和数据结构选择必须说明原因
+- 注释必须使用中文编写
+- 避免过度注释——代码自解释时无需添加注释
 
-## [SECTION_3_NAME]
-<!-- Example: Development Workflow, Review Process, Quality Gates, etc. -->
+## 技术约束
 
-[SECTION_3_CONTENT]
-<!-- Example: Code review requirements, testing gates, deployment approval process, etc. -->
+- **后端语言**: Python 3.11+
+- **前端框架**: Vue 3 + TypeScript
+- **后端框架**: FastAPI（异步优先）
+- **前后端通信**: RESTful API 或 WebSocket
+- **代码风格**: Python 遵循 PEP 8，前端遵循 ESLint + Prettier
+- **测试要求**: 后端使用 pytest，前端使用 Vitest
 
-## Governance
-<!-- Example: Constitution supersedes all other practices; Amendments require documentation, approval, migration plan -->
+## 开发工作流
 
-[GOVERNANCE_RULES]
-<!-- Example: All PRs/reviews must verify compliance; Complexity must be justified; Use [GUIDANCE_FILE] for runtime development guidance -->
+- 所有功能开发必须在独立的功能分支上进行
+- 提交信息必须清晰描述变更内容
+- 代码审查必须检查异步规范和注释规范的遵循情况
+- 合并前必须确保所有测试通过
 
-**Version**: [CONSTITUTION_VERSION] | **Ratified**: [RATIFICATION_DATE] | **Last Amended**: [LAST_AMENDED_DATE]
-<!-- Example: Version: 2.1.1 | Ratified: 2025-06-13 | Last Amended: 2025-07-16 -->
+## 治理
+
+本 Constitution 是项目开发的最高指导文件，所有开发活动必须遵循其中的原则和规范。修改本文件需要记录变更原因并更新版本号。所有 PR 和代码审查必须验证对本 Constitution 的合规性。
+
+**Version**: 1.0.0 | **Ratified**: 2026-05-10 | **Last Amended**: 2026-05-10
