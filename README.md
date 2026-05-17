@@ -1,0 +1,2 @@
+# auto_noval_agents
+使用langgraph搭建的多agent，主要用于创建小说
