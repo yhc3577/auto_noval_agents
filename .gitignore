@@ -45,3 +45,7 @@ htmlcov/
 
 # Claude 本地配置
 .claude/
+
+# Specify 框架文件（不上传）
+.specify/
+specs/
