@@ -344,22 +344,14 @@ async def review_chapter(
     content = chapter.get("content", "")
     outline = chapter.get("outline", "")
 
-    system_prompt = """你是一位资深小说编辑。请从以下维度审核章节内容，给出专业意见：
-1. 剧情贴合度：是否符合大纲要求
-2. 人设一致性：人物言行是否符合设定
-3. 文笔质量：语句流畅度、节奏感、描写水准
-4. 逻辑漏洞：是否有前后矛盾或不合理之处
-5. 爽点/钩子：是否有效设置读者期待
+    from ..services.prompt_service import format_prompt
 
-请以结构化方式输出，每个维度给出评分(1-10)和具体意见，最后给出总体评价和修改建议。"""
-
-    user_prompt = f"""章节细纲：
-{outline}
-
-章节正文：
-{content}
-
-请进行专业审核。"""
+    system_prompt = await format_prompt("chapter_review_system")
+    user_prompt = await format_prompt(
+        "chapter_review_user",
+        outline=outline,
+        content=content,
+    )
 
     try:
         result = await call_llm(system_prompt, user_prompt)
@@ -401,26 +393,18 @@ async def polish_chapter(
 
     outline = chapter.get("outline", "")
 
-    system_prompt = """你是一位专业小说润色编辑。请根据用户的指示对章节内容进行润色优化。
+    from ..services.prompt_service import format_prompt
 
-要求：
-- 保持原文的剧情走向和核心情节不变
-- 提升文笔质量，优化语句表达
-- 增强画面感和情感张力
-- 保持人物对话的个性化特征
-- 如果用户给出了具体修改意见，优先按照意见修改
-- 直接输出润色后的完整正文，不要加任何说明或解释"""
+    system_prompt = await format_prompt("chapter_polish_system")
 
     instruction_part = f"\n用户的修改意见：{req.instruction}" if req.instruction else ""
 
-    user_prompt = f"""章节细纲：
-{outline}
-
-原文内容：
-{req.content}
-{instruction_part}
-
-请润色后输出完整正文。"""
+    user_prompt = await format_prompt(
+        "chapter_polish_user",
+        outline=outline,
+        content=req.content,
+        instruction_part=instruction_part,
+    )
 
     try:
         result = await call_llm(system_prompt, user_prompt)

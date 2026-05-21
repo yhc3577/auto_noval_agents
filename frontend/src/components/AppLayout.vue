@@ -32,6 +32,11 @@
           <template #title>系统设置</template>
         </el-menu-item>
 
+        <el-menu-item index="/settings/prompts">
+          <el-icon><ChatDotSquare /></el-icon>
+          <template #title>Prompt 管理</template>
+        </el-menu-item>
+
         <template v-if="currentNovelId">
           <el-menu-item-group>
             <template #title>
@@ -115,7 +120,7 @@ import { useRoute, useRouter } from 'vue-router'
 import { useAuthStore } from '@/stores/auth'
 import {
   EditPen, HomeFilled, Plus, Document, Monitor, Download,
-  ArrowDown, SwitchButton, Setting
+  ArrowDown, SwitchButton, Setting, ChatDotSquare
 } from '@element-plus/icons-vue'
 
 const route = useRoute()

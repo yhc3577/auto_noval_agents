@@ -106,6 +106,7 @@ from .api.creation import router as creation_router  # noqa: E402
 from .api.export import router as export_router  # noqa: E402
 from .api.model_config import router as model_config_router  # noqa: E402
 from .api.novel import router as novel_router  # noqa: E402
+from .api.prompt import router as prompt_router  # noqa: E402
 
 app.include_router(auth_router, prefix="/api/auth", tags=["认证"])
 app.include_router(novel_router, prefix="/api/novel", tags=["小说项目"])
@@ -113,6 +114,7 @@ app.include_router(creation_router, prefix="/api/novel", tags=["创作控制"])
 app.include_router(chapter_router, prefix="/api/chapter", tags=["章节管理"])
 app.include_router(export_router, prefix="/api/novel", tags=["导出"])
 app.include_router(model_config_router, prefix="/api/model-configs", tags=["模型配置"])
+app.include_router(prompt_router, prefix="/api/prompts", tags=["Prompt管理"])
 
 
 @app.middleware("http")

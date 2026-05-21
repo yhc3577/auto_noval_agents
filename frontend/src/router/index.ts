@@ -50,6 +50,12 @@ const router = createRouter({
           meta: { title: '系统设置' },
         },
         {
+          path: 'settings/prompts',
+          name: 'PromptSettings',
+          component: () => import('@/views/PromptSettings.vue'),
+          meta: { title: 'Prompt 管理' },
+        },
+        {
           path: 'novel/:id/export',
           name: 'Export',
           component: () => import('@/views/Export.vue'),
