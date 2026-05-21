@@ -27,6 +27,11 @@
           <template #title>新建小说</template>
         </el-menu-item>
 
+        <el-menu-item index="/settings">
+          <el-icon><Setting /></el-icon>
+          <template #title>系统设置</template>
+        </el-menu-item>
+
         <template v-if="currentNovelId">
           <el-menu-item-group>
             <template #title>
@@ -110,7 +115,7 @@ import { useRoute, useRouter } from 'vue-router'
 import { useAuthStore } from '@/stores/auth'
 import {
   EditPen, HomeFilled, Plus, Document, Monitor, Download,
-  ArrowDown, SwitchButton
+  ArrowDown, SwitchButton, Setting
 } from '@element-plus/icons-vue'
 
 const route = useRoute()

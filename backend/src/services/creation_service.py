@@ -122,10 +122,19 @@ async def pause_writing(project_id: str, user_id: str) -> dict:
 
 
 async def _run_writing_pipeline(project_id: str):
-    """运行6Agent创作流水线"""
+    """运行6Agent创作流水线，注入用户自定义 LLM 配置"""
     from ..agents.pipeline import run_pipeline
 
     try:
+        # 加载项目所有者的模型配置，注入到后台任务上下文
+        db = await get_mongodb()
+        project = await db["novel_projects"].find_one({"_id": ObjectId(project_id)})
+        if not project:
+            logger.warning(f"后台任务: 项目不存在 project_id={project_id}")
+        else:
+            user_id = project["user_id"]
+            await _inject_user_llm_config(db, user_id)
+
         await run_pipeline(project_id)
     except Exception as e:
         logger.error(f"创作流水线异常: {e}", exc_info=True)
@@ -140,3 +149,47 @@ async def _run_writing_pipeline(project_id: str):
         })
     finally:
         await release_lock(project_id)
+
+
+async def _inject_user_llm_config(db, user_id: str) -> None:
+    """注入用户的 LLM 配置到当前上下文，优先活跃配置，兜底最新配置"""
+    from ..core.llm import set_current_llm_config
+
+    user_doc = await db["users"].find_one({"_id": ObjectId(user_id)})
+    if not user_doc:
+        logger.warning(f"后台任务: 用户不存在 user_id={user_id}")
+        return
+
+    config = None
+
+    # 优先使用活跃配置
+    active_id = user_doc.get("active_model_config_id")
+    if active_id:
+        config = await db["model_configs"].find_one({
+            "_id": ObjectId(active_id),
+            "user_id": user_id,
+        })
+        if config and config.get("api_key"):
+            logger.info(f"后台任务已注入用户活跃 LLM 配置: {config['name']} ({config.get('provider')}/{config['model']})")
+        else:
+            logger.warning(f"后台任务: 活跃配置无效或无 api_key，尝试兜底")
+
+    # 兜底：使用最新创建且有 api_key 的配置
+    if not config or not config.get("api_key"):
+        configs_cursor = db["model_configs"].find({"user_id": user_id}).sort("created_at", -1)
+        async for c in configs_cursor:
+            if c.get("api_key"):
+                config = c
+                logger.info(f"后台任务已注入用户最新 LLM 配置（兜底）: {config['name']} ({config.get('provider')}/{config['model']})")
+                break
+
+    if config and config.get("api_key"):
+        set_current_llm_config({
+            "provider": config.get("provider", "openai"),
+            "model": config["model"],
+            "api_key": config["api_key"],
+            "base_url": config.get("base_url", ""),
+            "max_tokens": config.get("max_tokens", 8192),
+        })
+    else:
+        logger.warning(f"后台任务: 用户 {user_doc.get('username')} 无可用模型配置，将使用全局默认")

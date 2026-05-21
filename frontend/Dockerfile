@@ -10,7 +10,7 @@ COPY . .
 RUN npm run build
 
 # ── Stage 2: Nginx 静态服务 ─────────────────────────────────
-FROM nginx:alpine
+FROM docker.1ms.run/nginx:alpine
 
 # 拷贝构建产物
 COPY --from=builder /app/dist /usr/share/nginx/html

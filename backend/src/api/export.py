@@ -47,10 +47,19 @@ async def export_novel(
 
     # 生成导出内容
     title = project["title"]
+
+    # 清洗章节标题：去除与章节号重复的前缀（如 title="第1章" 或 "第一章：xxx"）
+    import re as _re
+    _chapter_prefix = _re.compile(r"^第[零一二三四五六七八九十百千\d]+章[：:\s]*")
+
     if format == "txt":
         content = f"{title}\n{'=' * 40}\n\n"
         for ch in chapters:
-            content += f"第{ch['chapter_number']}章 {ch['title']}\n"
+            chapter_title = _chapter_prefix.sub("", ch.get("title", "")).strip()
+            if chapter_title:
+                content += f"第{ch['chapter_number']}章 {chapter_title}\n"
+            else:
+                content += f"第{ch['chapter_number']}章\n"
             content += "-" * 30 + "\n"
             content += ch.get("content", "") + "\n\n"
         media_type = "text/plain"
@@ -58,7 +67,11 @@ async def export_novel(
     else:
         content = f"# {title}\n\n"
         for ch in chapters:
-            content += f"## 第{ch['chapter_number']}章 {ch['title']}\n\n"
+            chapter_title = _chapter_prefix.sub("", ch.get("title", "")).strip()
+            if chapter_title:
+                content += f"## 第{ch['chapter_number']}章 {chapter_title}\n\n"
+            else:
+                content += f"## 第{ch['chapter_number']}章\n\n"
             content += ch.get("content", "") + "\n\n"
         media_type = "text/markdown"
         ext = "md"

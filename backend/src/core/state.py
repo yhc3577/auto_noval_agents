@@ -23,6 +23,11 @@ class NovelState(TypedDict):
     chapter_content: str
     chapter_summary: str
 
+    # 摘要结构化数据（summarizer 生成，advance 节点入库）
+    summary_key_events: list
+    summary_character_changes: list
+    summary_foreshadowing: list
+
     # 全局记忆
     global_scroll_summary: str
     character_status: dict

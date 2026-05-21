@@ -46,6 +46,7 @@ async def register(req: RegisterRequest):
     user_doc = {
         "username": req.username,
         "password_hash": hash_password(req.password),
+        "active_model_config_id": None,
     }
     result = await users.insert_one(user_doc)
 

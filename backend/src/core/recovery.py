@@ -29,6 +29,14 @@ async def check_and_recover():
             {"$set": {"status": "paused", "updated_at": datetime.now(timezone.utc)}},
         )
 
+        # 清理卡在非终态的章节，重置为 draft 以便恢复后重新生成
+        reset_result = await db["chapters"].update_many(
+            {"project_id": project_id, "status": {"$nin": ["completed", "draft"]}},
+            {"$set": {"status": "draft"}},
+        )
+        if reset_result.modified_count > 0:
+            logger.info(f"项目 {project_id} 重置了 {reset_result.modified_count} 个卡住的章节")
+
         # 恢复进度信息
         current_chapter = project.get("current_chapter", 0)
         await save_progress(project_id, {

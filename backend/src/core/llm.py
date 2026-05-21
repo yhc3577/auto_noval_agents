@@ -2,9 +2,12 @@
 
 所有 provider 统一使用 OpenAI 兼容接口（vLLM、DeepSeek、Minimax
 都支持 OpenAI 格式的 /v1/chat/completions），简化维护。
+
+支持通过 contextvars 注入用户级 LLM 配置，实现前端自定义模型切换。
 """
 
 import asyncio
+from contextvars import ContextVar
 
 from langchain_core.language_models import BaseChatModel
 from langchain_core.messages import HumanMessage, SystemMessage
@@ -14,6 +17,19 @@ from .config import settings
 from ..utils.logger import get_logger
 
 logger = get_logger(__name__)
+
+# 当前请求/任务的用户自定义 LLM 配置
+_current_llm_config: ContextVar[dict | None] = ContextVar("current_llm_config", default=None)
+
+
+def set_current_llm_config(config: dict | None) -> None:
+    """设置当前异步上下文的 LLM 配置，HTTP 中间件或后台任务调用前设置"""
+    _current_llm_config.set(config)
+
+
+def get_current_llm_config() -> dict | None:
+    """获取当前异步上下文的 LLM 配置，_build_llm 内部使用"""
+    return _current_llm_config.get()
 
 # 敏感内容相关错误标识
 _SENSITIVE_ERRORS = ("new_sensitive", "sensitive", "content_policy", "safety")
@@ -48,31 +64,49 @@ PROVIDER_DEFAULTS = {
 }
 
 
-def get_llm() -> BaseChatModel:
-    """根据配置获取 LLM 实例，统一使用 OpenAI 兼容接口"""
+def _resolve_llm_params() -> dict:
+    """解析 LLM 参数，优先使用 context var 中的用户配置，否则使用全局配置"""
+    ctx_config = get_current_llm_config()
+
+    if ctx_config and ctx_config.get("api_key"):
+        provider = ctx_config.get("provider", "openai")
+        model = ctx_config["model"]
+        api_key = ctx_config["api_key"]
+        base_url = ctx_config.get("base_url", "")
+        max_tokens = ctx_config.get("max_tokens", 8192)
+        logger.info(f"使用用户自定义 LLM 配置: provider={provider}, model={model}, base_url={base_url}, max_tokens={max_tokens}")
+        return {"provider": provider, "model": model, "api_key": api_key, "base_url": base_url, "max_tokens": max_tokens}
+
+    # 全局配置回退
     provider = settings.llm_provider.lower()
     model = settings.llm_model
     api_key = settings.llm_api_key
     base_url = settings.llm_base_url
+    max_tokens = settings.llm_max_tokens if hasattr(settings, 'llm_max_tokens') else 8192
 
-    # 如果用户没有自定义 base_url，使用 provider 默认值
     defaults = PROVIDER_DEFAULTS.get(provider, PROVIDER_DEFAULTS["vllm"])
     if base_url == "http://localhost:8000/v1" and provider != "vllm":
         base_url = defaults["base_url"]
     if api_key == "EMPTY" and provider != "vllm":
         api_key = defaults.get("api_key", "")
-    # 如果 provider 有默认 model 配置，使用它
     if "model" in defaults and model == "Qwen/Qwen2.5-72B-Instruct":
         model = defaults["model"]
 
-    logger.info(f"初始化 LLM: provider={provider}, model={model}, base_url={base_url}")
+    logger.info(f"使用全局默认 LLM 配置: provider={provider}, model={model}, base_url={base_url}, max_tokens={max_tokens}")
+    return {"provider": provider, "model": model, "api_key": api_key, "base_url": base_url, "max_tokens": max_tokens}
+
+
+def get_llm() -> BaseChatModel:
+    """根据配置获取 LLM 实例，优先使用用户自定义配置"""
+    params = _resolve_llm_params()
+    logger.info(f"初始化 LLM: provider={params['provider']}, model={params['model']}, base_url={params['base_url']}, max_tokens={params['max_tokens']}")
 
     return ChatOpenAI(
-        model=model,
-        openai_api_key=api_key,
-        base_url=base_url,
+        model=params["model"],
+        openai_api_key=params["api_key"],
+        base_url=params["base_url"],
         temperature=0.7,
-        max_tokens=8192,
+        max_tokens=params["max_tokens"],
     )
 
 
@@ -83,24 +117,14 @@ def _is_sensitive_error(exc: Exception) -> bool:
 
 
 def _build_llm(max_tokens: int = 8192, temperature: float = 0.7) -> BaseChatModel:
-    """构建 LLM 实例"""
-    provider = settings.llm_provider.lower()
-    model = settings.llm_model
-    api_key = settings.llm_api_key
-    base_url = settings.llm_base_url
-    defaults = PROVIDER_DEFAULTS.get(provider, PROVIDER_DEFAULTS["vllm"])
-    if base_url == "http://localhost:8000/v1" and provider != "vllm":
-        base_url = defaults["base_url"]
-    if api_key == "EMPTY" and provider != "vllm":
-        api_key = defaults.get("api_key", "")
-    if "model" in defaults and model == "Qwen/Qwen2.5-72B-Instruct":
-        model = defaults["model"]
+    """构建 LLM 实例，优先使用用户自定义配置"""
+    params = _resolve_llm_params()
     return ChatOpenAI(
-        model=model,
-        openai_api_key=api_key,
-        base_url=base_url,
+        model=params["model"],
+        openai_api_key=params["api_key"],
+        base_url=params["base_url"],
         temperature=temperature,
-        max_tokens=max_tokens,
+        max_tokens=params["max_tokens"],
     )
 
 

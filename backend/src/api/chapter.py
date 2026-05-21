@@ -222,6 +222,11 @@ async def delete_chapter(
     project_id = chapter["project_id"]
     chapter_number = chapter["chapter_number"]
 
+    # 检查项目是否正在创作中
+    project = await db["novel_projects"].find_one({"_id": ObjectId(project_id)})
+    if project and project.get("status") == "writing":
+        raise HTTPException(status_code=400, detail="项目正在创作中，请先暂停后再删除章节")
+
     # 只允许删除最新的一章（章节号最大的）
     last_chapter = await db["chapters"].find_one(
         {"project_id": project_id},
@@ -265,6 +270,43 @@ async def delete_chapter(
         {"project_id": project_id, "chapter_number": {"$gt": chapter_number}},
         {"$inc": {"chapter_number": -1}},
     )
+
+    # 删除对应的章节记忆
+    await db["chapter_memory"].delete_one({
+        "project_id": project_id,
+        "chapter_number": chapter_number,
+    })
+
+    # 重新编号后续章节记忆（与章节保持同步）
+    await db["chapter_memory"].update_many(
+        {"project_id": project_id, "chapter_number": {"$gt": chapter_number}},
+        {"$inc": {"chapter_number": -1}},
+    )
+
+    # 清理 FAISS 索引中已删除章节的向量（标记重建）
+    try:
+        from ..services.vector_service import VectorService
+        vs = VectorService()
+        project_dir = vs._get_project_dir(project_id)
+        mapping_file = project_dir / "mapping.json"
+        if mapping_file.exists():
+            import json
+            with open(mapping_file, "r", encoding="utf-8") as f:
+                mapping = json.load(f)
+            # 删除已删章节对应的条目，并更新重编号后的章节号
+            new_mapping = []
+            for entry in mapping:
+                entry_cn = entry.get("chapter_number", 0)
+                if entry_cn == chapter_number:
+                    continue  # 删除
+                if entry_cn > chapter_number:
+                    entry["chapter_number"] = entry_cn - 1  # 重编号
+                new_mapping.append(entry)
+            with open(mapping_file, "w", encoding="utf-8") as f:
+                json.dump(new_mapping, f, ensure_ascii=False)
+            logger.info(f"FAISS 索引已同步: 删除 chapter={chapter_number}, 当前 {len(new_mapping)} 条向量")
+    except Exception as e:
+        logger.warning(f"FAISS 索引同步失败（不影响删除流程）: {e}")
 
     # 同步进度到 Redis，确保前端显示正确
     from ..services.cache_service import save_progress

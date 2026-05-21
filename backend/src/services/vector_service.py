@@ -33,18 +33,26 @@ class VectorService:
         return copyright_dir
 
     def create_project_index(self, project_id: str, dimension: int = 768):
-        """为项目创建 FAISS 索引"""
+        """为项目创建 FAISS 索引（已存在但维度不匹配时自动重建）"""
         project_dir = self._get_project_dir(project_id)
         index_file = project_dir / "memory.index"
         mapping_file = project_dir / "mapping.json"
 
+        if index_file.exists():
+            existing = faiss.read_index(str(index_file))
+            if existing.d != dimension:
+                logger.warning(
+                    f"FAISS 索引维度不匹配 (现有: {existing.d}, 期望: {dimension})，重建索引"
+                )
+                index_file.unlink()
+                mapping_file.unlink(missing_ok=True)
+
         if not index_file.exists():
             index = faiss.IndexFlatL2(dimension)
             faiss.write_index(index, str(index_file))
-            # 初始化映射文件
             with open(mapping_file, "w", encoding="utf-8") as f:
                 json.dump([], f)
-            logger.info(f"为项目 {project_id} 创建 FAISS 索引")
+            logger.info(f"为项目 {project_id} 创建 FAISS 索引 (dim={dimension})")
 
     def add_vectors(
         self, project_id: str, vectors: list[list[float]], metadata: list[dict]
@@ -54,13 +62,25 @@ class VectorService:
         index_file = project_dir / "memory.index"
         mapping_file = project_dir / "mapping.json"
 
+        vec_dim = len(vectors[0])
         if not index_file.exists():
-            self.create_project_index(project_id, len(vectors[0]))
+            self.create_project_index(project_id, vec_dim)
 
         # 读取索引和映射
         index = faiss.read_index(str(index_file))
         with open(mapping_file, "r", encoding="utf-8") as f:
             mapping = json.load(f)
+
+        # 最后一次防线：维度不匹配则重建
+        if index.d != vec_dim:
+            logger.warning(
+                f"FAISS 索引维度不匹配 (索引: {index.d}, 向量: {vec_dim})，重建索引后重试"
+            )
+            index_file.unlink()
+            mapping_file.unlink(missing_ok=True)
+            self.create_project_index(project_id, vec_dim)
+            index = faiss.read_index(str(index_file))
+            mapping = []
 
         # 添加向量
         vectors_np = np.array(vectors, dtype=np.float32)
@@ -102,6 +122,56 @@ class VectorService:
             if idx < len(mapping):
                 results.append({**mapping[idx], "distance": float(dist)})
         return results
+
+    def remove_vectors_by_chapter(self, project_id: str, chapter_number: int):
+        """按章节号移除向量（重建索引，跳过指定章节）"""
+        project_dir = self._get_project_dir(project_id)
+        index_file = project_dir / "memory.index"
+        mapping_file = project_dir / "mapping.json"
+
+        if not index_file.exists():
+            return
+
+        with open(mapping_file, "r", encoding="utf-8") as f:
+            mapping = json.load(f)
+
+        # 过滤掉目标章节
+        new_mapping = [m for m in mapping if m.get("chapter_number") != chapter_number]
+        removed = len(mapping) - len(new_mapping)
+        if removed == 0:
+            return
+
+        if not new_mapping:
+            # 全部移除：重建空索引
+            index_file.unlink()
+            mapping_file.unlink(missing_ok=True)
+            logger.info(f"FAISS 索引已清空: project={project_id}, chapter={chapter_number}")
+            return
+
+        # 重建索引
+        import faiss
+        import numpy as np
+        index = faiss.read_index(str(index_file))
+        dim = index.d
+        new_index = faiss.IndexFlatL2(dim)
+        new_vectors = np.zeros((len(new_mapping), dim), dtype=np.float32)
+
+        # 从旧索引中提取保留的向量
+        old_index = index
+        for i, m in enumerate(new_mapping):
+            old_id = m["id"]
+            new_vectors[i] = old_index.reconstruct(old_id)
+
+        new_index.add(new_vectors)
+
+        # 更新映射 ID
+        for i, m in enumerate(new_mapping):
+            m["id"] = i
+
+        faiss.write_index(new_index, str(index_file))
+        with open(mapping_file, "w", encoding="utf-8") as f:
+            json.dump(new_mapping, f, ensure_ascii=False)
+        logger.info(f"FAISS 已移除: project={project_id}, chapter={chapter_number}, 剩余 {len(new_mapping)} 条")
 
     def search_copyright(
         self, query_vector: list[float], top_k: int = 5

@@ -104,20 +104,28 @@ async def get_summary(project_id: str) -> str:
     return ""
 
 
-async def save_chapter_memory(project_id: str, chapter_number: int, chapter_summary: str, key_events: list[str]):
-    """保存章节记忆到 MongoDB（用于向量检索）"""
+async def save_chapter_memory(
+    project_id: str,
+    chapter_number: int,
+    chapter_summary: str,
+    key_events: list[str],
+    character_changes: list[str] | None = None,
+    foreshadowing: list[str] | None = None,
+):
+    """保存章节记忆到 MongoDB（用于记忆检索和向量检索）"""
     db = await get_mongodb()
+    doc = {
+        "project_id": project_id,
+        "chapter_number": chapter_number,
+        "summary": chapter_summary,
+        "key_events": key_events,
+        "character_changes": character_changes or [],
+        "foreshadowing": foreshadowing or [],
+        "updated_at": datetime.now(timezone.utc),
+    }
     await db["chapter_memory"].update_one(
         {"project_id": project_id, "chapter_number": chapter_number},
-        {
-            "$set": {
-                "project_id": project_id,
-                "chapter_number": chapter_number,
-                "summary": chapter_summary,
-                "key_events": key_events,
-                "updated_at": datetime.now(timezone.utc),
-            }
-        },
+        {"$set": doc},
         upsert=True,
     )
 
@@ -135,28 +143,29 @@ async def get_chapter_memories(project_id: str, limit: int = 10) -> list[dict]:
             "chapter_number": doc["chapter_number"],
             "summary": doc.get("summary", ""),
             "key_events": doc.get("key_events", []),
+            "character_changes": doc.get("character_changes", []),
+            "foreshadowing": doc.get("foreshadowing", []),
         })
     return list(reversed(memories))  # 按章节顺序返回
 
 
-async def search_related_memories(project_id: str, keywords: list[str], limit: int = 5) -> list[dict]:
-    """根据关键词搜索相关章节记忆"""
+async def search_related_memories(project_id: str, keywords: list[str], limit: int = 10) -> list[dict]:
+    """根据关键词搜索相关章节记忆（同时搜索摘要、关键事件、人物变化、伏笔）"""
     db = await get_mongodb()
 
-    # 构建正则查询
     regex_pattern = "|".join(keywords) if keywords else ""
 
     if regex_pattern:
-        # 搜索摘要或关键事件中包含关键词的章节
         cursor = db["chapter_memory"].find({
             "project_id": project_id,
             "$or": [
                 {"summary": {"$regex": regex_pattern, "$options": "i"}},
                 {"key_events": {"$regex": regex_pattern, "$options": "i"}},
+                {"character_changes": {"$regex": regex_pattern, "$options": "i"}},
+                {"foreshadowing": {"$regex": regex_pattern, "$options": "i"}},
             ]
         }).sort("chapter_number", -1).limit(limit)
     else:
-        # 没有关键词，返回最近的章节
         cursor = db["chapter_memory"].find(
             {"project_id": project_id}
         ).sort("chapter_number", -1).limit(limit)
@@ -167,6 +176,8 @@ async def search_related_memories(project_id: str, keywords: list[str], limit: i
             "chapter_number": doc["chapter_number"],
             "summary": doc.get("summary", ""),
             "key_events": doc.get("key_events", []),
+            "character_changes": doc.get("character_changes", []),
+            "foreshadowing": doc.get("foreshadowing", []),
         })
     return memories
 

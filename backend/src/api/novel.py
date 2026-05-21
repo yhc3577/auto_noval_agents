@@ -166,10 +166,11 @@ async def recall_memory(
     top_k: int = Query(5, ge=1, le=20),
     user: dict = Depends(get_current_user),
 ):
-    """手动FAISS语义召回前文剧情"""
+    """手动语义召回前文剧情（FAISS 向量检索）"""
+    from ..services.embedding_service import embed_text
     from ..services.vector_service import VectorService
 
     vs = VectorService()
-    # 实际需要先将 query 转为向量，这里简化处理
-    results = vs.search(project_id, [0.0] * 768, top_k)
+    query_vector = embed_text(query)
+    results = vs.search(project_id, query_vector, top_k)
     return {"results": results}

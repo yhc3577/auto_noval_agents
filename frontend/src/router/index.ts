@@ -44,6 +44,12 @@ const router = createRouter({
           meta: { title: '章节阅读' },
         },
         {
+          path: 'settings',
+          name: 'Settings',
+          component: () => import('@/views/Settings.vue'),
+          meta: { title: '系统设置' },
+        },
+        {
           path: 'novel/:id/export',
           name: 'Export',
           component: () => import('@/views/Export.vue'),

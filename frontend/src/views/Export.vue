@@ -56,7 +56,7 @@
 
       <!-- 系统设置 -->
       <div class="section-card">
-        <div class="section-title">系统设置</div>
+        <div class="section-title">版权设置</div>
         <el-form label-position="top" size="large">
           <el-form-item label="版权查重阈值">
             <el-slider
