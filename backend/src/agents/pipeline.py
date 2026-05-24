@@ -20,6 +20,7 @@ from .summarizer import generate_summary, update_global_summary, generate_chapte
 from ..core.llm import call_llm_stream
 from ..services.prompt_service import format_prompt
 from .writer import _strip_meta, write_chapter_stream
+from ..validators.engine import validate_chapter, ValidationResult
 
 logger = get_logger(__name__)
 
@@ -464,11 +465,24 @@ async def node_summarizer(state: NovelState) -> dict:
 
 
 async def node_auditor(state: NovelState) -> dict:
-    """剧情审核节点：大纲贴合度、人设一致性、文笔质量"""
+    """审核节点：Skills 验证引擎 + 旧 Auditor fallback。
+
+    流程:
+    1. Skills 程序化快速检查（毫秒级，免费）
+    2. 程序化全通过 → 抽样 10% LLM 核验
+    3. 程序化有问题 → 触发 LLM 结构化核验
+    4. 汇总结果 → pass/fail + 结构化 feedback
+    5. 异常时 fallback 到旧审计
+    """
     project_id = state["project_id"]
     current_chapter = state["current_chapter"]
     config = state["user_config"]
-    logger.info(f"[审核节点] 开始剧情审核: project_id={project_id}, chapter={current_chapter}")
+    content = state.get("chapter_content", "")
+    chapter_outline = state.get("chapter_outline", "")
+    character_info = config.get("character_info", "")
+    target_words = config.get("words_per_chapter", 2000)
+
+    logger.info(f"[审核节点] 开始 Skills 验证: project_id={project_id}, chapter={current_chapter}, words={len(content)}")
 
     db = await get_mongodb()
     pause_check = await _check_pause(project_id)
@@ -484,8 +498,139 @@ async def node_auditor(state: NovelState) -> dict:
         "progress": progress_pct,
         "status": "writing",
         "chapter_status": "auditing",
-        "log": f"第{current_chapter}章剧情审核中...",
+        "log": f"第{current_chapter}章 Skills 验证中...",
     })
+
+    # ── 主路径：Skills 验证引擎 ──
+    try:
+        validation = await validate_chapter(
+            content=content,
+            chapter_outline=chapter_outline,
+            character_info=character_info,
+            target_words=target_words,
+            project_id=project_id,
+            current_chapter=current_chapter,
+            embed_service=None,  # 使用 standalone embed_text 函数（当前架构）
+            llm_sample_rate=0.1,
+        )
+
+        audit_passed = validation.passed
+        audit_score = validation.score
+        audit_feedback = validation.feedback
+
+        # 持久化审核记录（结构化）
+        chapter = await db["chapters"].find_one({
+            "project_id": project_id,
+            "chapter_number": current_chapter,
+        })
+        if chapter:
+            # 将程序化检查结果展平为旧格式兼容字段
+            outline_issues = []
+            char_issues = []
+            coherence_issues = []
+            repetition_issues = []
+            writing_issues = []
+            compliance_issues = []
+
+            for r in validation.programmatic_results:
+                check_name = r.get("check", "")
+                if not r.get("passed", True):
+                    detail = r.get("details", "")
+                    if check_name == "word_count":
+                        pass
+                    elif check_name == "sentence_repetition":
+                        repetition_issues.extend(
+                            f"{r2['sentence']} (×{r2['count']})"
+                            for r2 in r.get("repeated", [])
+                        )
+                    elif check_name == "outline_keyword_coverage":
+                        outline_issues.append(
+                            f"关键词覆盖率 {r.get('hit_rate', 0):.0%}，"
+                            f"未命中: {', '.join(r.get('missed', [])[:5])}"
+                        )
+                    elif check_name == "character_consistency":
+                        char_issues.append(
+                            f"未定义对话者: {r.get('undefined_speakers', [])}"
+                        )
+                    elif check_name == "structure_quality":
+                        writing_issues.extend(r.get("issues", []))
+                    elif check_name == "compliance":
+                        triggered = r.get("triggered_keywords", [])
+                        if triggered:
+                            compliance_issues.extend(
+                                f"[{t['category']}] {t.get('match', t.get('pattern', ''))}"
+                                for t in triggered[:5]
+                            )
+
+            # 从 LLM 结果补充
+            for llm_check_name, llm_r in validation.llm_results.items():
+                if not llm_r.get("overall_pass", True):
+                    if llm_check_name == "outline_adherence":
+                        points = llm_r.get("outline_points", [])
+                        failed = [p for p in points if p.get("coverage") in ("partial", "missing")]
+                        outline_issues.extend(
+                            f"情节点{p['id']}: {p.get('expected', '')[:50]} "
+                            f"→ {p.get('coverage', '')}"
+                            for p in failed
+                        )
+                    elif llm_check_name == "character_consistency":
+                        chars = llm_r.get("characters", [])
+                        for c in chars:
+                            violations = c.get("trait_violations", [])
+                            char_issues.extend(
+                                f"{c['name']}: {v.get('action', '')}"
+                                for v in violations
+                            )
+
+            result_str = "pass" if audit_passed else "fail"
+            await db["audit_records"].update_one(
+                {
+                    "chapter_id": str(chapter["_id"]),
+                    "audit_type": "skills_validation",
+                },
+                {"$set": {
+                    "project_id": project_id,
+                    "result": result_str,
+                    "score": audit_score,
+                    "opinion": audit_feedback,
+                    "outline_issues": outline_issues,
+                    "character_issues": char_issues,
+                    "coherence_issues": coherence_issues,
+                    "repetition_issues": repetition_issues,
+                    "writing_quality_issues": writing_issues,
+                    "compliance_issues": compliance_issues,
+                    "engine": "skills",
+                    "checks_run": validation.checks_run,
+                    "checks_passed": validation.checks_passed,
+                    "llm_calls_made": validation.llm_calls_made,
+                    "llm_calls_saved": validation.llm_calls_saved,
+                    "score": audit_score,
+                    "created_at": datetime.now(timezone.utc),
+                }},
+                upsert=True,
+            )
+
+        logger.info(
+            f"[审核节点] Skills 验证完成: passed={audit_passed}, score={audit_score}, "
+            f"checks={validation.checks_run}/{validation.checks_passed} passed, "
+            f"llm_calls={validation.llm_calls_made} made / {validation.llm_calls_saved} saved"
+        )
+        return {
+            "audit_result": audit_passed,
+            "audit_opinion": audit_feedback,
+            "step": "audited",
+        }
+
+    except Exception as e:
+        logger.error(f"[审核节点] Skills 验证异常，fallback 到旧审计: {e}", exc_info=True)
+        return await _fallback_auditor(state)
+
+
+async def _fallback_auditor(state: NovelState) -> dict:
+    """旧审计作为 fallback：当 Skills 验证引擎异常时使用"""
+    project_id = state["project_id"]
+    current_chapter = state["current_chapter"]
+    config = state["user_config"]
 
     audit_result = await audit_chapter(
         chapter_content=state.get("chapter_content", ""),
@@ -494,7 +639,6 @@ async def node_auditor(state: NovelState) -> dict:
         global_summary=config.get("global_summary", ""),
     )
 
-    # 持久化审核记录
     db = await get_mongodb()
     chapter = await db["chapters"].find_one({
         "project_id": project_id,
@@ -517,12 +661,12 @@ async def node_auditor(state: NovelState) -> dict:
                 "repetition_issues": audit_result.get("repetition_issues", []),
                 "writing_quality_issues": audit_result.get("writing_quality_issues", []),
                 "compliance_issues": audit_result.get("compliance_issues", []),
+                "engine": "legacy_prompt",
                 "created_at": datetime.now(timezone.utc),
             }},
             upsert=True,
         )
 
-    # 构建对 writer 有用的反馈摘要
     feedback_parts = []
     outline_issues = audit_result.get("outline_issues", [])
     character_issues = audit_result.get("character_issues", [])
@@ -531,25 +675,20 @@ async def node_auditor(state: NovelState) -> dict:
     writing_quality_issues = audit_result.get("writing_quality_issues", [])
     compliance_issues = audit_result.get("compliance_issues", [])
 
-    # 字数检查：不在达标范围内则覆写审核结果为不通过
     content = state.get("chapter_content", "")
     target_words = config.get("words_per_chapter", 2000)
     word_count = len(content)
-    min_words = target_words
     max_words = int(target_words * 1.3)
-    if word_count < min_words or word_count > max_words:
+    if word_count < target_words or word_count > max_words:
         audit_result["result"] = "fail"
         audit_result["score"] = min(audit_result.get("score", 50), 40)
-        if word_count < min_words:
+        if word_count < target_words:
             feedback_parts.append(
-                f"字数不足：当前{word_count}字，要求{min_words}~{max_words}字。"
-                f"请在重写时扩充内容，确保每个情节点都有充分展开"
+                f"字数不足：当前{word_count}字，要求{target_words}~{max_words}字。"
             )
         else:
-            prefix = "存在重复水剧情且" if repetition_issues else ""
             feedback_parts.append(
-                f"{prefix}字数超标：当前{word_count}字，要求{min_words}~{max_words}字。"
-                f"请在重写时精简冗余内容，保持情节紧凑"
+                f"字数超标：当前{word_count}字，要求{target_words}~{max_words}字。"
             )
 
     if outline_issues:
@@ -566,12 +705,11 @@ async def node_auditor(state: NovelState) -> dict:
         feedback_parts.append("合规问题：" + "；".join(compliance_issues))
     if not feedback_parts:
         feedback_parts.append(audit_result["opinion"])
-    audit_feedback = "\n".join(feedback_parts)
 
-    logger.info(f"[审核节点] 审核完成: chapter={current_chapter}, result={audit_result['result']}, score={audit_result['score']}")
+    logger.info(f"[审核节点] Fallback 审计完成: chapter={current_chapter}, result={audit_result['result']}")
     return {
         "audit_result": audit_result["result"] == "pass",
-        "audit_opinion": audit_feedback,
+        "audit_opinion": "\n".join(feedback_parts),
         "step": "audited",
     }
 

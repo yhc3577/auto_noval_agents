@@ -46,6 +46,10 @@
               <el-icon><Document /></el-icon>
               <template #title>项目详情</template>
             </el-menu-item>
+            <el-menu-item :index="`/novel/${currentNovelId}/review`">
+              <el-icon><Checked /></el-icon>
+              <template #title>大纲审核</template>
+            </el-menu-item>
             <el-menu-item :index="`/novel/${currentNovelId}/console`">
               <el-icon><Monitor /></el-icon>
               <template #title>创作控制台</template>
@@ -119,7 +123,7 @@ import { ref, computed } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useAuthStore } from '@/stores/auth'
 import {
-  EditPen, HomeFilled, Plus, Document, Monitor, Download,
+  EditPen, HomeFilled, Plus, Document, Monitor, Download, Checked,
   ArrowDown, SwitchButton, Setting, ChatDotSquare
 } from '@element-plus/icons-vue'
 

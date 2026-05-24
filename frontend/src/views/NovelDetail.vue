@@ -3,6 +3,14 @@
     <div class="page-header">
       <h1 class="page-title">{{ novel.title }}</h1>
       <div class="header-actions">
+        <el-button
+          v-if="novel.outline_status === 'review' || novel.outline_status === 'rejected'"
+          type="warning"
+          :icon="Checked"
+          @click="router.push(`/novel/${novel.project_id}/review`)"
+        >
+          审核大纲
+        </el-button>
         <el-button type="primary" :icon="Monitor" @click="router.push(`/novel/${novel.project_id}/console`)">
           创作控制台
         </el-button>
@@ -66,8 +74,28 @@
           </el-button>
         </div>
 
+        <!-- 待审核提示 -->
+        <el-alert
+          v-if="novel.outline_status === 'review'"
+          title="大纲已生成，请审核通过后再开始创作"
+          type="warning"
+          show-icon
+          :closable="false"
+          style="margin-bottom: var(--space-md)"
+        />
+
+        <!-- 已驳回提示 -->
+        <el-alert
+          v-else-if="novel.outline_status === 'rejected'"
+          :title="'大纲已驳回，请修改后重新审核' + (novel.review_feedback ? '：' + novel.review_feedback : '')"
+          type="error"
+          show-icon
+          :closable="false"
+          style="margin-bottom: var(--space-md)"
+        />
+
         <!-- 大纲内容 -->
-        <div class="section-card" v-else-if="novel.outline">
+        <div class="section-card" v-if="novel.outline">
           <div class="section-title">
             全书大纲
             <el-button size="small" @click="handleRegenerate" :loading="regenerating" :disabled="novel.status === 'writing'" style="margin-left: auto">
@@ -150,7 +178,7 @@
 import { ref, onMounted, onUnmounted } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useNovelStore } from '@/stores/novel'
-import { Monitor, Download, Edit, Delete, Loading } from '@element-plus/icons-vue'
+import { Monitor, Download, Edit, Delete, Loading, Checked } from '@element-plus/icons-vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 
 const route = useRoute()
@@ -189,7 +217,9 @@ function startPollingIfNeeded() {
       await loadNovel()
       if (novel.value?.outline_status !== 'pending' && novel.value?.outline_status !== 'generating') {
         stopPolling()
-        if (novel.value?.outline_status === 'completed') {
+        if (novel.value?.outline_status === 'review') {
+          ElMessage.success('大纲生成完成，请审核')
+        } else if (novel.value?.outline_status === 'completed') {
           ElMessage.success('大纲生成完成')
         }
       }

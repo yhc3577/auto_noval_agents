@@ -37,6 +37,10 @@ async def start_writing(project_id: str, user_id: str) -> dict:
         logger.warning(f"项目章节数为0，无法启动创作: project_id={project_id}")
         return {"error": "请先设置章节数量"}
 
+    if project.get("outline_status") != "completed":
+        logger.warning(f"大纲未审核通过，无法启动创作: project_id={project_id}, outline_status={project.get('outline_status')}")
+        return {"error": "大纲未审核通过，请先审核大纲"}
+
     # 获取分布式锁
     locked = await acquire_lock(project_id)
     if not locked:

@@ -56,6 +56,12 @@ const router = createRouter({
           meta: { title: 'Prompt 管理' },
         },
         {
+          path: 'novel/:id/review',
+          name: 'OutlineReview',
+          component: () => import('@/views/OutlineReview.vue'),
+          meta: { title: '大纲审核' },
+        },
+        {
           path: 'novel/:id/export',
           name: 'Export',
           component: () => import('@/views/Export.vue'),

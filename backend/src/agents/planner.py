@@ -11,22 +11,113 @@ from ..core.llm import call_llm
 from ..services.prompt_service import format_prompt
 from ..utils.logger import get_logger
 
+def _repair_truncated_json(text: str) -> str | None:
+    """尝试修复被截断的 JSON（LLM 输出超 token 限制时常见）"""
+    # 策略：从后往前找到最后一个完整的 volume_outline 对象结束标记 "},
+    # 或完整的 key-value 对，然后补全剩余结构
+
+    # 移除末尾不完整的片段（如截断在字符串中间）
+    # 找到最后一个完整的 JSON 结构边界
+    last_good = 0
+    depth = 0
+    in_string = False
+    escape_next = False
+
+    for i, ch in enumerate(text):
+        if escape_next:
+            escape_next = False
+            continue
+        if ch == "\\":
+            escape_next = True
+            continue
+        if ch == '"' and not escape_next:
+            in_string = not in_string
+            continue
+        if in_string:
+            continue
+        if ch in "{[":
+            depth += 1
+        elif ch in "}]":
+            depth -= 1
+            if depth <= 0:
+                last_good = i + 1
+
+    if last_good > 0 and depth <= 0:
+        # 找到了完整的顶层结构结束
+        return text[:last_good]
+
+    # 没找到完整结束，尝试在最后一个 } 处截断并补全
+    last_brace = text.rfind("}")
+    if last_brace > 0:
+        truncated = text[:last_brace + 1]
+        # 统计未闭合的括号
+        open_braces = truncated.count("{") - truncated.count("}")
+        open_brackets = truncated.count("[") - truncated.count("]")
+        truncated += "]" * open_brackets + "}" * open_braces
+        return truncated
+
+    return None
+
+
+def _regex_extract_outline_json(text: str) -> dict:
+    """当 JSON 解析完全失败时，用正则提取关键字段（容错恢复）"""
+    result: dict = {}
+
+    # 提取 full_outline：匹配 "full_outline": "..." 中的内容
+    full_match = re.search(
+        r'"full_outline"\s*:\s*"((?:[^"\\]|\\.)*)"', text, re.DOTALL
+    )
+    if full_match:
+        result["full_outline"] = full_match.group(1)
+    else:
+        # 尝试更宽松的匹配：取 "full_outline" 之后到下一个已知字段之前
+        full_match = re.search(
+            r'"full_outline"\s*:\s*"(.+?)(?:"\s*[,}]|\s*"volume_outlines")',
+            text, re.DOTALL
+        )
+        if full_match:
+            result["full_outline"] = full_match.group(1).strip()
+
+    # 提取 volume_outlines 数组中的每个对象
+    volumes: list[dict] = []
+    vol_pattern = re.compile(
+        r'"volume_number"\s*:\s*(\d+)\s*,\s*'
+        r'"volume_title"\s*:\s*"((?:[^"\\]|\\.)*)"\s*,\s*'
+        r'"content"\s*:\s*"((?:[^"\\]|\\.)*)"',
+        re.DOTALL,
+    )
+    for m in vol_pattern.finditer(text):
+        volumes.append({
+            "volume_number": int(m.group(1)),
+            "volume_title": m.group(2),
+            "content": m.group(3),
+        })
+
+    if volumes:
+        result["volume_outlines"] = volumes
+
+    return result
+
+
 logger = get_logger(__name__)
 
 
 def _extract_json(text: str) -> dict:
     """从 LLM 响应中提取 JSON（兼容 markdown 代码块和常见格式错误）"""
+    # 1. 去除 markdown 代码块包裹
     match = re.search(r"```(?:json)?\s*\n?(.*?)\n?```", text, re.DOTALL)
     if match:
         text = match.group(1)
 
     text = text.strip()
 
+    # 2. 直接解析
     try:
         return json.loads(text)
     except json.JSONDecodeError:
         pass
 
+    # 3. 常见修复：去除尾部逗号、控制字符
     fixed = text
     fixed = re.sub(r",\s*([}\]])", r"\1", fixed)
     fixed = re.sub(r"[\x00-\x08\x0b\x0c\x0e-\x1f]", "", fixed)
@@ -36,6 +127,7 @@ def _extract_json(text: str) -> dict:
     except json.JSONDecodeError:
         pass
 
+    # 4. 尝试从最外层 {} 提取
     start = fixed.find("{")
     end = fixed.rfind("}")
     if start != -1 and end > start:
@@ -44,7 +136,21 @@ def _extract_json(text: str) -> dict:
         except json.JSONDecodeError:
             pass
 
-    return json.loads(text)
+    # 5. LLM 截断修复：从后向前找到最后一个完整的 key-value，补上 }]}
+    if start != -1:
+        truncated = fixed[start:]
+        # 找到最后一个未被转义的双引号字符串结束位置
+        # 简单策略：从后往前找最后一个 "volume_title" 或 "content" 等字段结束
+        last_complete = _repair_truncated_json(truncated)
+        if last_complete:
+            try:
+                return json.loads(last_complete)
+            except json.JSONDecodeError:
+                pass
+
+    # 6. 最终兜底：用正则提取关键字段，不抛异常
+    logger.warning(f"JSON 解析全部失败，尝试正则提取，原文前200字符: {text[:200]}")
+    return _regex_extract_outline_json(text)
 
 
 async def parse_existing_outline(outline_text: str) -> dict:
@@ -80,7 +186,7 @@ async def _generate_volume_outlines(
         volume_count=volume_count,
     )
 
-    response = await call_llm(system_prompt, user_prompt, max_tokens=4096)
+    response = await call_llm(system_prompt, user_prompt, max_tokens=8192)
     data = _extract_json(response)
     full_outline = data.get("full_outline", response)
     volume_outlines = data.get("volume_outlines", [])
@@ -221,8 +327,8 @@ async def generate_outline(project_id: str, novel_config: dict):
     else:
         await db["outlines"].insert_one(outline_doc)
 
-    await _update_outline_status(db, project_id, "completed")
-    logger.info(f"大纲生成完成: {project_id}")
+    await _update_outline_status(db, project_id, "review")
+    logger.info(f"大纲生成完成，等待审核: {project_id}")
 
 
 async def _update_outline_status(db, project_id: str, status: str):

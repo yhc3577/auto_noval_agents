@@ -9,10 +9,14 @@
           :icon="VideoPlay"
           size="large"
           :loading="loading"
+          :disabled="!outlineApproved"
           @click="handleStart"
         >
           开始创作
         </el-button>
+        <el-tooltip v-if="!outlineApproved && progress.status !== 'writing'" content="请先审核通过大纲" placement="bottom">
+          <el-icon class="warning-icon" :size="20"><WarningFilled /></el-icon>
+        </el-tooltip>
         <template v-else>
           <el-button
             type="danger"
@@ -148,7 +152,7 @@ import api from '@/services/api'
 import { ElMessage } from 'element-plus'
 import {
   VideoPlay, SwitchButton, EditPen, Memo, Reading,
-  Operation
+  Operation, WarningFilled
 } from '@element-plus/icons-vue'
 
 const route = useRoute()
@@ -161,6 +165,7 @@ const chapters = ref<any[]>([])
 const novelTitle = ref('')
 
 const projectId = route.params.id as string
+const outlineApproved = ref(false)
 
 // 设置当前活跃项目
 creationStore.setActiveProject(projectId)
@@ -309,6 +314,7 @@ onMounted(async () => {
     const detail = await novelStore.fetchNovelDetail(projectId)
     if (detail) {
       novelTitle.value = detail.title || ''
+      outlineApproved.value = detail.outline_status === 'completed'
       creationStore.progressMap[projectId] = {
         ...creationStore.progressMap[projectId],
         current_chapter: detail.current_chapter ?? 0,
@@ -362,6 +368,11 @@ onUnmounted(() => {
 .header-actions {
   display: flex;
   gap: var(--space-sm);
+  align-items: center;
+}
+
+.warning-icon {
+  color: var(--color-warning);
 }
 
 /* ── 进度卡片 ── */

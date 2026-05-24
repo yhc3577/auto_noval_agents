@@ -57,10 +57,23 @@ export const useNovelStore = defineStore('novel', () => {
     const { data } = await api.delete('/novel/delete', {
       data: { project_id: projectId }
     })
-    // 从列表中移除
     novels.value = novels.value.filter(n => n.project_id !== projectId)
     return data
   }
 
-  return { novels, total, currentNovel, fetchNovels, fetchNovelDetail, createNovel, regenerateOutline, updateNovel, deleteNovel }
+  async function reviewOutline(projectId: string, approved: boolean, feedback = '') {
+    const { data } = await api.post('/novel/outline/review', {
+      project_id: projectId,
+      approved,
+      feedback,
+    })
+    return data
+  }
+
+  async function updateOutline(payload: any) {
+    const { data } = await api.put('/novel/outline/update', payload)
+    return data
+  }
+
+  return { novels, total, currentNovel, fetchNovels, fetchNovelDetail, createNovel, regenerateOutline, updateNovel, deleteNovel, reviewOutline, updateOutline }
 })

@@ -45,7 +45,7 @@ async def create_project(user_id: str, data: dict) -> dict:
         "chapter_count": chapter_count,
         "words_per_chapter": words_per_chapter,
         "status": "draft",
-        "outline_status": "completed" if existing_outline else "pending",
+        "outline_status": "review" if existing_outline else "pending",
         "current_volume": 1,
         "current_chapter": 0,
         "rewrite_count": 0,
@@ -91,8 +91,8 @@ async def create_project(user_id: str, data: dict) -> dict:
             "project_id": project_id,
             "title": data["title"],
             "status": "draft",
-            "outline_status": "completed",
-            "message": "项目创建成功，大纲已导入",
+            "outline_status": "review",
+            "message": "项目创建成功，大纲已导入，等待审核",
         }
     else:
         # 后台异步生成大纲（不阻塞 API 响应）
@@ -209,6 +209,8 @@ async def get_project_detail(project_id: str, user_id: str) -> dict | None:
         "words_per_chapter": project["words_per_chapter"],
         "status": project["status"],
         "outline_status": project.get("outline_status", "completed"),
+        "review_feedback": project.get("review_feedback", ""),
+        "reviewed_at": project["reviewed_at"].isoformat() if project.get("reviewed_at") else None,
         "current_chapter": project.get("current_chapter", 0),
         "outline": {
             "full_outline": outline["full_outline"] if outline else "",
@@ -317,3 +319,85 @@ async def delete_project(project_id: str, user_id: str) -> dict | None:
 
     logger.info(f"项目已删除: project_id={project_id}")
     return {"project_id": project_id, "message": "项目已删除"}
+
+
+async def submit_outline_review(project_id: str, user_id: str, approved: bool, feedback: str = "") -> dict:
+    """审核大纲：通过或驳回"""
+    db = await get_mongodb()
+
+    project = await db["novel_projects"].find_one({
+        "_id": ObjectId(project_id),
+        "user_id": user_id,
+    })
+    if not project:
+        return {"error": "项目不存在"}
+
+    if project.get("outline_status") != "review":
+        return {"error": "当前大纲状态不允许审核"}
+
+    if approved:
+        await db["novel_projects"].update_one(
+            {"_id": ObjectId(project_id)},
+            {"$set": {
+                "outline_status": "completed",
+                "review_feedback": feedback,
+                "reviewed_at": datetime.now(timezone.utc),
+                "updated_at": datetime.now(timezone.utc),
+            }},
+        )
+        return {"project_id": project_id, "outline_status": "completed", "message": "大纲审核通过"}
+    else:
+        await db["novel_projects"].update_one(
+            {"_id": ObjectId(project_id)},
+            {"$set": {
+                "outline_status": "rejected",
+                "review_feedback": feedback,
+                "reviewed_at": datetime.now(timezone.utc),
+                "updated_at": datetime.now(timezone.utc),
+            }},
+        )
+        return {"project_id": project_id, "outline_status": "rejected", "message": "大纲已驳回，请修改后重新提交"}
+
+
+async def update_outline(project_id: str, user_id: str, outline_data: dict) -> dict:
+    """更新大纲内容（审核阶段修改后重新提交）"""
+    db = await get_mongodb()
+
+    project = await db["novel_projects"].find_one({
+        "_id": ObjectId(project_id),
+        "user_id": user_id,
+    })
+    if not project:
+        return {"error": "项目不存在"}
+
+    if project.get("outline_status") not in ("review", "rejected"):
+        return {"error": "当前大纲状态不允许修改"}
+
+    update_doc = {"version": outline_data.get("version", 1) + 1}
+    if "full_outline" in outline_data:
+        update_doc["full_outline"] = outline_data["full_outline"]
+    if "volume_outlines" in outline_data:
+        update_doc["volume_outlines"] = outline_data["volume_outlines"]
+    if "chapter_outlines" in outline_data:
+        update_doc["chapter_outlines"] = outline_data["chapter_outlines"]
+
+    existing = await db["outlines"].find_one({"project_id": project_id})
+    if existing:
+        await db["outlines"].update_one(
+            {"project_id": project_id},
+            {"$set": update_doc},
+        )
+    else:
+        update_doc["project_id"] = project_id
+        update_doc["created_at"] = datetime.now(timezone.utc)
+        await db["outlines"].insert_one(update_doc)
+
+    await db["novel_projects"].update_one(
+        {"_id": ObjectId(project_id)},
+        {"$set": {
+            "outline_status": "review",
+            "updated_at": datetime.now(timezone.utc),
+        }},
+    )
+
+    return {"project_id": project_id, "outline_status": "review", "message": "大纲已更新，等待审核"}

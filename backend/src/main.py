@@ -22,6 +22,22 @@ secret_key = settings.secret_key
 async def lifespan(app: FastAPI):
     """应用生命周期管理"""
     logger.info("AI小说生成系统启动")
+
+    # 启动时加载 Skills 校验模块，确认可用
+    try:
+        from .validators.skill_loader import load_all_skills
+        import os
+        skills_dir = os.path.join(os.path.dirname(__file__), "validators", "skills")
+        skills = load_all_skills(skills_dir)
+        logger.info(f"[Skills] 加载 {len(skills)} 个校验 Skill:")
+        for s in skills:
+            logger.info(
+                f"  [{s.priority}] {s.name} | check_method={s.check_method} "
+                f"| failure={s.failure} | items={len(s.check_items)}"
+            )
+    except Exception as e:
+        logger.warning(f"[Skills] 校验 Skill 加载失败，将回退到旧审计: {e}")
+
     yield
     logger.info("AI小说生成系统关闭")
     await close_database()
